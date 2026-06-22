@@ -224,6 +224,18 @@ async function run() {
         res.status(500).json({ success: false, message: error.message });
       }
     });
+    
+    app.get('/cart', async (req, res) => {
+      try {
+        const carts = await CartCollection.find().toArray();
+        res.json({
+          success: true,
+          data: carts
+        });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
 
     app.get('/cart/:email', async (req, res) => {
       try {
@@ -259,36 +271,79 @@ async function run() {
         res.status(500).json({ success: false, message: error.message });
       }
     });
+app.delete('/cart/:email/item/:itemId', async (req, res) => {
+  try {
+    const email = req.params.email;
+    const itemId = req.params.itemId;
+
+    const result = await CartCollection.updateOne(
+      { email },
+      { $pull: { items: { _id: itemId } } }
+    );
+
+    if (result.modifiedCount === 0) {
+      return res.status(404).json({ success: false, message: "Item not found in cart" });
+    }
+
+    // Get the updated cart to check if it's empty
+    const updatedCart = await CartCollection.findOne({ email });
+    const itemsCount = updatedCart?.items?.length || 0;
+
+    // If cart is empty, delete it
+    if (itemsCount === 0) {
+      await CartCollection.deleteOne({ email });
+      res.json({
+        success: true,
+        message: "Item removed, cart is now empty and deleted",
+        cartEmpty: true,
+        itemsCount: 0
+      });
+    } else {
+      res.json({
+        success: true,
+        message: "Item removed from cart successfully",
+        cartEmpty: false,
+        itemsCount: itemsCount,
+        data: result
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
     // ========== ORDER ROUTES ==========
-    app.post('/orders', async (req, res) => {
-      try {
-        const orderData = req.body;
-        orderData.createdAt = new Date().toISOString();
-        orderData.status = "Pending";
-        
-        const result = await OrdersCollection.insertOne(orderData);
-        
-        await CartCollection.deleteOne({ email: orderData.email });
-        
-        res.json({
-          success: true,
-          message: "Order placed successfully!",
-          data: result,
-          orderId: result.insertedId
-        });
-      } catch (error) {
-        console.error("Error placing order:", error);
-        res.status(500).json({ success: false, message: error.message });
-      }
+
+    
+   app.post('/orders', async (req, res) => {
+  console.log("POST /orders HIT");
+
+  try {
+    const orderData = req.body;
+
+    const result = await OrdersCollection.insertOne(orderData);
+
+    console.log("ORDER SAVED:", result);
+
+    res.json({
+      success: true,
+      data: result
     });
 
-    app.get('/orders/:email', async (req, res) => {
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+    app.get('/orders', async (req, res) => {
       try {
-        const email = req.params.email;
-        const orders = await OrdersCollection.find({ 
-          email: { $regex: new RegExp(`^${email}$`, 'i') } 
-        }).toArray();
+        console.log("🔍 Fetching all orders...");
+        const orders = await OrdersCollection.find().toArray();
+        console.log(`✅ Found ${orders.length} orders`);
         
         res.json({
           success: true,
@@ -296,7 +351,7 @@ async function run() {
           count: orders.length
         });
       } catch (error) {
-        console.error("Error fetching orders:", error);
+        console.error("❌ Error fetching orders:", error);
         res.status(500).json({ 
           success: false, 
           message: error.message,
@@ -305,23 +360,36 @@ async function run() {
       }
     });
 
-    app.get('/orders', async (req, res) => {
+    app.get('/orders/:email', async (req, res) => {
       try {
-        const orders = await OrdersCollection.find().toArray();
+        const email = req.params.email;
+        console.log(`🔍 Fetching orders for email: ${email}`);
+        
+        const orders = await OrdersCollection.find({ 
+          email: { $regex: new RegExp(`^${email}$`, 'i') } 
+        }).toArray();
+        
+        console.log(`✅ Found ${orders.length} orders for ${email}`);
+        
         res.json({
           success: true,
           data: orders,
           count: orders.length
         });
       } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error("❌ Error fetching orders:", error);
+        res.status(500).json({ 
+          success: false, 
+          message: error.message,
+          data: [] 
+        });
       }
     });
 
-    // সম্পূর্ণ অর্ডার ডিলিট করার API (সব আইটেম সহ)
     app.delete('/orders/:id', async (req, res) => {
       try {
         const id = req.params.id;
+        console.log(`🗑️ Deleting order: ${id}`);
         
         if (!ObjectId.isValid(id)) {
           return res.status(400).json({ 
@@ -339,13 +407,59 @@ async function run() {
           });
         }
 
+        console.log(`✅ Order deleted: ${id}`);
         res.json({ 
           success: true, 
           message: "Order deleted successfully",
           deletedCount: result.deletedCount
         });
       } catch (error) {
-        console.error("Delete error:", error);
+        console.error("❌ Delete error:", error);
+        res.status(500).json({ 
+          success: false, 
+          message: error.message 
+        });
+      }
+    });
+
+    app.put('/orders/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status } = req.body;
+        
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ 
+            success: false, 
+            message: "Invalid order ID format" 
+          });
+        }
+        
+        if (!status) {
+          return res.status(400).json({
+            success: false,
+            message: "Status is required"
+          });
+        }
+        
+        const result = await OrdersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status, updatedAt: new Date().toISOString() } }
+        );
+        
+        if (result.modifiedCount === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Order not found or status unchanged"
+          });
+        }
+        
+        res.json({
+          success: true,
+          message: "Order status updated successfully",
+          data: result
+        });
+      } catch (error) {
+        console.error("❌ Status update error:", error);
         res.status(500).json({ 
           success: false, 
           message: error.message 
@@ -358,6 +472,8 @@ async function run() {
         const orderId = req.params.orderId;
         const itemId = req.params.itemId;
         
+        console.log(`🗑️ Deleting item ${itemId} from order ${orderId}`);
+        
         if (!ObjectId.isValid(orderId)) {
           return res.status(400).json({ 
             success: false, 
@@ -365,45 +481,87 @@ async function run() {
           });
         }
         
+        // Find the order first
+        const order = await OrdersCollection.findOne({ _id: new ObjectId(orderId) });
+        
+        if (!order) {
+          return res.status(404).json({ 
+            success: false, 
+            message: "Order not found" 
+          });
+        }
+        
+        // Remove the item
+        const updatedItems = order.items.filter(item => {
+          const itemIdStr = typeof item._id === 'object' && item._id.$oid ? item._id.$oid : String(item._id);
+          return itemIdStr !== itemId;
+        });
+        
+        if (updatedItems.length === order.items.length) {
+          return res.status(404).json({ 
+            success: false, 
+            message: "Item not found in order" 
+          });
+        }
+        
+        // Update the order
         const result = await OrdersCollection.updateOne(
           { _id: new ObjectId(orderId) },
-          { $pull: { items: { _id: itemId } } }
+          { $set: { items: updatedItems, updatedAt: new Date().toISOString() } }
         );
-
+        
         if (result.modifiedCount === 0) {
           return res.status(404).json({ 
             success: false, 
-            message: "Item or Order not found" 
+            message: "Failed to update order" 
           });
         }
-
-        const updatedOrder = await OrdersCollection.findOne({ _id: new ObjectId(orderId) });
         
-        if (updatedOrder && updatedOrder.items && updatedOrder.items.length === 0) {
+        // If no items left, delete the order
+        if (updatedItems.length === 0) {
           await OrdersCollection.deleteOne({ _id: new ObjectId(orderId) });
+          console.log(`✅ Order deleted as it became empty: ${orderId}`);
           return res.json({ 
             success: true, 
             message: "Last item deleted, order removed",
             orderEmpty: true
           });
         }
-
+        
+        console.log(`✅ Item deleted from order ${orderId}`);
         res.json({ 
           success: true, 
-          message: "Item deleted successfully",
-          data: updatedOrder
+          message: "Item deleted successfully"
         });
       } catch (error) {
-        console.error("Error deleting item:", error);
+        console.error("❌ Error deleting item:", error);
         res.status(500).json({ success: false, message: error.message });
       }
     });
 
+    // ========== TEST ROUTE ==========
+    app.get('/test-orders', async (req, res) => {
+      try {
+        // Check if orders collection exists
+        const collections = await client.db('food-ordering').listCollections().toArray();
+        const collectionNames = collections.map(c => c.name);
+        
+        res.json({
+          collections: collectionNames,
+          hasOrders: collectionNames.includes('orders'),
+          message: collectionNames.includes('orders') ? 'Orders collection exists' : 'Orders collection does not exist'
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     await client.db("admin").command({ ping: 1 });
-    console.log("Connected to MongoDB successfully!");
+    console.log("✅ Connected to MongoDB successfully!");
+    console.log("📊 Available collections:", await client.db('food-ordering').listCollections().toArray());
 
   } catch (error) {
-    console.error("Database connection error:", error);
+    console.error("❌ Database connection error:", error);
   }
 }
 
@@ -414,5 +572,5 @@ app.get('/', (req, res) => {
 })
 
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`)
+  console.log(`🚀 Server running on port ${port}`)
 })
