@@ -1,12 +1,21 @@
 const express = require('express');
 const app = express()
-const port = 3000
+const port = process.env.PORT || 5000;  
 const cors = require('cors');
 const dns = require('dns');
+const crypto = require('crypto');
 require('dotenv').config()
 
 app.use(cors());
 app.use(express.json());
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://localhost:5000'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+app.use(express.urlencoded({ extended: true }));
 
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
@@ -30,7 +39,7 @@ async function run() {
     const CartCollection = client.db('food-ordering').collection('carts'); 
     const OrdersCollection = client.db('food-ordering').collection('orders'); 
 
-    // ========== USER ROUTES ==========
+    // ---------- User APIs ----------
     app.get('/users', async (req, res) => {
       try {
         const result = await UserCollection.find().toArray();
@@ -124,7 +133,7 @@ async function run() {
       }
     });
 
-    // ========== FOOD ROUTES ==========
+    // ---------- Foods APIs ----------
     app.get('/foods', async (req, res) => {
       try {
         const result = await FoodsCollection.find().toArray();
@@ -184,7 +193,7 @@ async function run() {
       }
     });
 
-    // ========== CART ROUTES ==========
+    // ---------- Cart APIs ----------
     app.post('/cart', async (req, res) => {
       try {
         const { email, items } = req.body;
@@ -271,73 +280,82 @@ async function run() {
         res.status(500).json({ success: false, message: error.message });
       }
     });
-app.delete('/cart/:email/item/:itemId', async (req, res) => {
-  try {
-    const email = req.params.email;
-    const itemId = req.params.itemId;
 
-    const result = await CartCollection.updateOne(
-      { email },
-      { $pull: { items: { _id: itemId } } }
-    );
+    app.delete('/cart/:email/item/:itemId', async (req, res) => {
+      try {
+        const email = req.params.email;
+        const itemId = req.params.itemId;
 
-    if (result.modifiedCount === 0) {
-      return res.status(404).json({ success: false, message: "Item not found in cart" });
-    }
+        const result = await CartCollection.updateOne(
+          { email },
+          { $pull: { items: { _id: itemId } } }
+        );
 
-    // Get the updated cart to check if it's empty
-    const updatedCart = await CartCollection.findOne({ email });
-    const itemsCount = updatedCart?.items?.length || 0;
+        if (result.modifiedCount === 0) {
+          return res.status(404).json({ success: false, message: "Item not found in cart" });
+        }
 
-    // If cart is empty, delete it
-    if (itemsCount === 0) {
-      await CartCollection.deleteOne({ email });
-      res.json({
-        success: true,
-        message: "Item removed, cart is now empty and deleted",
-        cartEmpty: true,
-        itemsCount: 0
-      });
-    } else {
-      res.json({
-        success: true,
-        message: "Item removed from cart successfully",
-        cartEmpty: false,
-        itemsCount: itemsCount,
-        data: result
-      });
-    }
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+        const updatedCart = await CartCollection.findOne({ email });
+        const itemsCount = updatedCart?.items?.length || 0;
 
-    // ========== ORDER ROUTES ==========
-
-    
-   app.post('/orders', async (req, res) => {
-  console.log("POST /orders HIT");
-
-  try {
-    const orderData = req.body;
-
-    const result = await OrdersCollection.insertOne(orderData);
-
-    console.log("ORDER SAVED:", result);
-
-    res.json({
-      success: true,
-      data: result
+        if (itemsCount === 0) {
+          await CartCollection.deleteOne({ email });
+          res.json({
+            success: true,
+            message: "Item removed, cart is now empty and deleted",
+            cartEmpty: true,
+            itemsCount: 0
+          });
+        } else {
+          res.json({
+            success: true,
+            message: "Item removed from cart successfully",
+            cartEmpty: false,
+            itemsCount: itemsCount,
+            data: result
+          });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
     });
 
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: error.message
+    // ---------- Orders APIs ----------
+    app.post('/orders', async (req, res) => {
+      try {
+        const orderData = {
+          email: req.body.email,
+          customerName: req.body.customerName,
+          phone: req.body.phone,
+          address: req.body.address,
+          deliveryNote: req.body.deliveryNote || '',
+          paymentMethod: req.body.paymentMethod || 'cash',
+          items: req.body.items || [],
+          subtotal: req.body.subtotal || 0,
+          deliveryFee: req.body.deliveryFee || 2.00,
+          total: req.body.total || 0,
+          status: 'Pending',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        console.log("customer data",req.body)
+
+        const result = await OrdersCollection.insertOne(orderData);
+        console.log("ORDER SAVED:", result);
+
+        res.json({
+          success: true,
+          data: result
+        });
+
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({
+          success: false,
+          message: error.message
+        });
+      }
     });
-  }
-});
 
     app.get('/orders', async (req, res) => {
       try {
@@ -356,6 +374,227 @@ app.delete('/cart/:email/item/:itemId', async (req, res) => {
           success: false, 
           message: error.message,
           data: [] 
+        });
+      }
+    });
+    
+    app.get('/orders/check/:orderId', async (req, res) => {
+      try {
+        const orderId = req.params.orderId;
+        
+        let order = await OrdersCollection.findOne({ 
+          $or: [
+            { _id: new ObjectId(orderId) },
+            { merchantOrderId: orderId },
+            { orderId: orderId }
+          ]
+        });
+        
+        if (!order) {
+          try {
+            order = await OrdersCollection.findOne({ 
+              merchantOrderId: orderId 
+            });
+          } catch (error) {
+            order = null;
+          }
+        }
+        
+        if (!order) {
+          return res.json({
+            success: false,
+            message: "Order not found"
+          });
+        }
+        
+        res.json({
+          success: true,
+          data: order
+        });
+      } catch (error) {
+        console.error('❌ Order check error:', error);
+        res.status(500).json({ 
+          success: false, 
+          message: error.message 
+        });
+      }
+    });
+
+    app.put('/orders/status/:orderId', async (req, res) => {
+      try {
+        const orderId = req.params.orderId;
+        const { status, transactionId, paymentStatus, paymentMethod, paidAt } = req.body;
+        
+        console.log(`📝 Updating order ${orderId} status to ${status || 'Paid'}`);
+        
+        let order = await OrdersCollection.findOne({ 
+          $or: [
+            { _id: new ObjectId(orderId) },
+            { merchantOrderId: orderId },
+            { orderId: orderId }
+          ]
+        });
+        
+        if (!order) {
+          try {
+            order = await OrdersCollection.findOne({ 
+              $or: [
+                { _id: new ObjectId(orderId) },
+                { merchantOrderId: orderId }
+              ]
+            });
+          } catch (error) {
+            order = await OrdersCollection.findOne({ 
+              merchantOrderId: orderId 
+            });
+          }
+        }
+        
+        if (!order) {
+          return res.status(404).json({ 
+            success: false, 
+            message: "Order not found" 
+          });
+        }
+        
+        const updateData = {
+          status: status || 'Paid',
+          updatedAt: new Date().toISOString(),
+          paymentStatus: paymentStatus || 'success'
+        };
+        
+        if (transactionId) {
+          updateData.transactionId = transactionId;
+        }
+        
+        if (paymentMethod) {
+          updateData.paymentMethod = paymentMethod;
+        }
+        
+        if (paidAt) {
+          updateData.paidAt = paidAt;
+        }
+        
+        const result = await OrdersCollection.updateOne(
+          { _id: order._id },
+          { $set: updateData }
+        );
+        
+        console.log(`✅ Order ${orderId} updated to PAID successfully`);
+        
+        res.json({
+          success: true,
+          message: "Order status updated to PAID",
+          data: result
+        });
+        
+      } catch (error) {
+        console.error('❌ Order update error:', error);
+        res.status(500).json({ 
+          success: false, 
+          message: error.message 
+        });
+      }
+    });
+
+    app.put('/orders/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status } = req.body;
+        
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ 
+            success: false, 
+            message: "Invalid order ID format" 
+          });
+        }
+        
+        if (!status) {
+          return res.status(400).json({
+            success: false,
+            message: "Status is required"
+          });
+        }
+        
+        const result = await OrdersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status, updatedAt: new Date().toISOString() } }
+        );
+        
+        if (result.modifiedCount === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Order not found or status unchanged"
+          });
+        }
+        
+        res.json({
+          success: true,
+          message: "Order status updated successfully",
+          data: result
+        });
+      } catch (error) {
+        console.error("❌ Status update error:", error);
+        res.status(500).json({ 
+          success: false, 
+          message: error.message 
+        });
+      }
+    });
+
+    app.put('/orders/status-update/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status } = req.body;
+        
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ 
+            success: false, 
+            message: "Invalid order ID format" 
+          });
+        }
+        
+        if (!status) {
+          return res.status(400).json({
+            success: false,
+            message: "Status is required"
+          });
+        }
+        
+        const validStatuses = ['On the way', 'Delivered', 'Cancelled'];
+        if (!validStatuses.includes(status)) {
+          return res.status(400).json({
+            success: false,
+            message: `Invalid status. Allowed: ${validStatuses.join(', ')}`
+          });
+        }
+        
+        const result = await OrdersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { 
+            $set: { 
+              status: status, 
+              updatedAt: new Date().toISOString() 
+            } 
+          }
+        );
+        
+        if (result.modifiedCount === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Order not found or status unchanged"
+          });
+        }
+        
+        res.json({
+          success: true,
+          message: `Order status updated to ${status}`,
+          data: result
+        });
+      } catch (error) {
+        res.status(500).json({ 
+          success: false, 
+          message: error.message 
         });
       }
     });
@@ -422,48 +661,85 @@ app.delete('/cart/:email/item/:itemId', async (req, res) => {
       }
     });
 
-    app.put('/orders/:id', async (req, res) => {
+    app.put('/orders/:orderId/item/:itemId/decrease', async (req, res) => {
       try {
-        const id = req.params.id;
-        const { status } = req.body;
+        const orderId = req.params.orderId;
+        const itemId = req.params.itemId;
         
-        if (!ObjectId.isValid(id)) {
+        console.log(`📉 Decreasing quantity for item ${itemId} in order ${orderId}`);
+        
+        if (!ObjectId.isValid(orderId)) {
           return res.status(400).json({ 
             success: false, 
             message: "Invalid order ID format" 
           });
         }
         
-        if (!status) {
-          return res.status(400).json({
-            success: false,
-            message: "Status is required"
+        const order = await OrdersCollection.findOne({ _id: new ObjectId(orderId) });
+        
+        if (!order) {
+          return res.status(404).json({ 
+            success: false, 
+            message: "Order not found" 
           });
         }
+        
+        if (order.status === 'Paid' || order.status === 'Delivered') {
+          return res.status(403).json({
+            success: false,
+            message: "Cannot modify paid or delivered orders"
+          });
+        }
+        
+        const itemIndex = order.items.findIndex(item => {
+          const itemIdStr = typeof item._id === 'object' && item._id.$oid ? item._id.$oid : String(item._id);
+          return itemIdStr === itemId;
+        });
+        
+        if (itemIndex === -1) {
+          return res.status(404).json({ 
+            success: false, 
+            message: "Item not found in order" 
+          });
+        }
+        
+        if (order.items[itemIndex].quantity > 1) {
+          order.items[itemIndex].quantity -= 1;
+        } else {
+          order.items.splice(itemIndex, 1);
+        }
+        
+        if (order.items.length === 0) {
+          await OrdersCollection.deleteOne({ _id: new ObjectId(orderId) });
+          console.log(`✅ Order deleted as it became empty: ${orderId}`);
+          return res.json({ 
+            success: true, 
+            message: "Last item removed, order deleted",
+            orderEmpty: true
+          });
+        }
+        
+        const newTotal = order.items.reduce((sum, item) => sum + (item.price * item.quantity), 0) + (order.deliveryFee || 0);
         
         const result = await OrdersCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status, updatedAt: new Date().toISOString() } }
+          { _id: new ObjectId(orderId) },
+          { 
+            $set: { 
+              items: order.items, 
+              total: newTotal,
+              updatedAt: new Date().toISOString() 
+            } 
+          }
         );
         
-        if (result.modifiedCount === 0) {
-          return res.status(404).json({
-            success: false,
-            message: "Order not found or status unchanged"
-          });
-        }
-        
-        res.json({
-          success: true,
-          message: "Order status updated successfully",
-          data: result
+        console.log(`✅ Quantity decreased for item in order ${orderId}`);
+        res.json({ 
+          success: true, 
+          message: "Quantity decreased successfully"
         });
       } catch (error) {
-        console.error("❌ Status update error:", error);
-        res.status(500).json({ 
-          success: false, 
-          message: error.message 
-        });
+        console.error("❌ Error decreasing quantity:", error);
+        res.status(500).json({ success: false, message: error.message });
       }
     });
 
@@ -481,7 +757,6 @@ app.delete('/cart/:email/item/:itemId', async (req, res) => {
           });
         }
         
-        // Find the order first
         const order = await OrdersCollection.findOne({ _id: new ObjectId(orderId) });
         
         if (!order) {
@@ -491,7 +766,13 @@ app.delete('/cart/:email/item/:itemId', async (req, res) => {
           });
         }
         
-        // Remove the item
+        if (order.status === 'Paid' || order.status === 'Delivered') {
+          return res.status(403).json({
+            success: false,
+            message: "Cannot delete items from paid or delivered orders"
+          });
+        }
+        
         const updatedItems = order.items.filter(item => {
           const itemIdStr = typeof item._id === 'object' && item._id.$oid ? item._id.$oid : String(item._id);
           return itemIdStr !== itemId;
@@ -504,7 +785,6 @@ app.delete('/cart/:email/item/:itemId', async (req, res) => {
           });
         }
         
-        // Update the order
         const result = await OrdersCollection.updateOne(
           { _id: new ObjectId(orderId) },
           { $set: { items: updatedItems, updatedAt: new Date().toISOString() } }
@@ -517,7 +797,6 @@ app.delete('/cart/:email/item/:itemId', async (req, res) => {
           });
         }
         
-        // If no items left, delete the order
         if (updatedItems.length === 0) {
           await OrdersCollection.deleteOne({ _id: new ObjectId(orderId) });
           console.log(`✅ Order deleted as it became empty: ${orderId}`);
@@ -539,26 +818,83 @@ app.delete('/cart/:email/item/:itemId', async (req, res) => {
       }
     });
 
-    // ========== TEST ROUTE ==========
-    app.get('/test-orders', async (req, res) => {
+    // ---------- Payment APIs ----------
+    app.post('/create-payment-v2', async (req, res) => {
       try {
-        // Check if orders collection exists
-        const collections = await client.db('food-ordering').listCollections().toArray();
-        const collectionNames = collections.map(c => c.name);
-        
+        const { orderId, realOrderId, amount, customerName, customerEmail, customerPhone } = req.body;
+
+        console.log('📝 Payment Request:', { orderId, realOrderId, amount });
+
+        const merchantId = process.env.PAYHERE_MERCHANT_ID;
+        const merchantSecret = process.env.PAYHERE_SECRET;
+        const formattedAmount = parseFloat(amount).toFixed(2);
+        const currency = 'LKR';
+
+        const hashedSecret = crypto.createHash('md5').update(merchantSecret).digest('hex').toUpperCase();
+        const hashString = merchantId + orderId + formattedAmount + currency + hashedSecret;
+        const hash = crypto.createHash('md5').update(hashString).digest('hex').toUpperCase();
+
+        const params = {
+          merchant_id: merchantId,
+          return_url: `${process.env.PAYHERE_RETURN_URL}?real_order_id=${realOrderId || ''}`,
+          cancel_url: process.env.PAYHERE_CANCEL_URL,
+          notify_url: process.env.PAYHERE_NOTIFY_URL,
+          order_id: orderId,
+          items: 'Food Order Payment',
+          amount: formattedAmount,
+          currency: currency,
+          hash: hash,
+          first_name: customerName?.trim().split(' ')[0] || 'Customer',
+          last_name: customerName?.trim().split(' ').slice(1).join(' ') || 'User',
+          email: customerEmail || 'customer@example.com',
+          phone: customerPhone || '0771234567',
+          address: 'No 1, Main Street',
+          city: 'Colombo',
+          country: 'Sri Lanka',
+        };
+
+        console.log('✅ Payment params generated:', { orderId, realOrderId });
+
         res.json({
-          collections: collectionNames,
-          hasOrders: collectionNames.includes('orders'),
-          message: collectionNames.includes('orders') ? 'Orders collection exists' : 'Orders collection does not exist'
+          success: true,
+          payhereUrl: process.env.PAYHERE_SANDBOX_URL,
+          params: params,
         });
+
       } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('❌ Payment creation error:', error);
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    app.post('/payment-notify', async (req, res) => {
+      try {
+        const { order_id, status_code, transaction_id, payhere_amount, payment_method } = req.body;
+        console.log('📢 PayHere Notify:', req.body);
+
+        if (status_code === '2') {
+          const order = await OrdersCollection.findOne({ merchantOrderId: order_id });
+          if (order) {
+            await OrdersCollection.updateOne(
+              { _id: order._id },
+              { $set: { 
+                status: 'Paid', 
+                transactionId: transaction_id,
+                paymentMethod: payment_method,
+                paidAt: new Date().toISOString()
+              }}
+            );
+            console.log(`✅ Order paid via notify: ${order._id}`);
+          }
+        }
+        res.status(200).send('OK');
+      } catch (error) {
+        res.status(500).send('Error');
       }
     });
 
     await client.db("admin").command({ ping: 1 });
     console.log("✅ Connected to MongoDB successfully!");
-    console.log("📊 Available collections:", await client.db('food-ordering').listCollections().toArray());
 
   } catch (error) {
     console.error("❌ Database connection error:", error);
