@@ -932,9 +932,8 @@ app.post('/payment-notify', ensureDbConnection, async (req, res) => {
   }
 });
 
-// ---------- Start Server ----------
 app.listen(port, async () => {
   console.log(`🚀 Server running on port ${port}`);
-  // Initial connection attempt
+
   await connectDB();
 });
