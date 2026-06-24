@@ -8,12 +8,16 @@ require('dotenv').config()
 
 app.use(cors());
 app.use(express.json());
+
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5000', 'https://food-ordering-system-e1acb.web.app'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+    origin: [
+        "http://localhost:5173",
+        "https://food-ordering-system-e1acb.web.app",
+         "http://localhost:5000",
+    ],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    credentials: true
+}))
 
 app.use(express.urlencoded({ extended: true }));
 
