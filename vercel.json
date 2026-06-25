@@ -9,12 +9,18 @@
     ],
     "routes": [
         {
+            "src": "/api/(.*)",
+            "dest": "index.js"
+        },
+        {
             "src": "/(.*)",
-            "dest": "index.js",
-            "methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+            "dest": "index.js"
         }
     ],
-    "env": {
-        "NODE_ENV": "production"
-    }
+    "rewrites": [
+        {
+            "source": "/(.*)",
+            "destination": "/index.js"
+        }
+    ]
 }
