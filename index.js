@@ -8,18 +8,25 @@ require('dotenv').config()
 
 app.use(cors());
 app.use(express.json());
-
 app.use(cors({
     origin: [
         "http://localhost:5173",
+        "http://localhost:3000",
         "https://food-ordering-system-e1acb.web.app",
-        "http://localhost:5000",
-    ],
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-    credentials: true
-}))
+        "https://food-ordering-system-e1acb.firebaseapp.com",
+        "https://food-ordering-system-server-five.vercel.app",
+        // Vercel ডিপ্লয়মেন্ট URL
+        process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '',
+        process.env.FRONTEND_URL || ''
+    ].filter(Boolean),
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
 
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
 
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
